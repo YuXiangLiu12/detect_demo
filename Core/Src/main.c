@@ -326,22 +326,19 @@ int main(void)
                             | ((uint32_t)usart3_rx_buf[14] << 8)
                             | ((uint32_t)usart3_rx_buf[15]);
 
-      /* 解码报警信息 */
-      const char *alm_text;
-      switch (rx_alarm) {
-        case 0:  alm_text = "NORMAL";       break;  /* 正常 */
-        case 1:  alm_text = "ALARM";        break;  /* 有报警, PC5=1 */
-        case 2:  alm_text = "SENSOR_ERR";   break;  /* 无报警, PC5=0 (传感器异常) */
-        case 3:  alm_text = "ALM+SEN_ERR";  break;  /* 有报警, PC5=0 (报警+传感器异常) */
-        default: alm_text = "UNKNOWN";      break;
+      if(rx_alarm == 0)
+      {
+        LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6|LL_GPIO_PIN_7);
+        LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_4);
+      }
+      else
+      {
+        LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6|LL_GPIO_PIN_7);
+        LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_4);
       }
 
-      /* 格式化输出文本 */
-      usart2_tx_len = snprintf((char *)usart2_tx_buf, sizeof(usart2_tx_buf),
-                                "ALARM=%lu %s\r\n", rx_alarm, alm_text);
-
       /* 通过 USART2 发出 */
-      USART2_SendPacket(usart2_tx_buf, usart2_tx_len);
+      USART2_SendPacket(usart2_tx_buf, sizeof(usart2_tx_buf));
 
       /* 清除标志, 准备接收下一帧 */
       usart3_rx_done = 0;
