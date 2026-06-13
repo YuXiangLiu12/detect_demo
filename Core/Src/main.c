@@ -24,6 +24,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -303,13 +304,41 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* ---- USART3 → USART2 转发: 收一次, 发一次 ---- */
+    /* ---- USART3 → USART2: 收一次, 解析一次, 发一次 ---- */
     if (usart3_rx_done)
     {
-      /* TODO step2: 解析 usart3_rx_buf[] → 构建 usart2_tx_buf[] */
-      /* 当前(step1): 直接将原始数据转发出去 */
-      memcpy(usart2_tx_buf, usart3_rx_buf, usart3_rx_len);
-      usart2_tx_len = usart3_rx_len;
+      /* 解析 16 字节二进制协议:
+         Byte 0-3:  帧头 0x55 0xAA 0x55 0xAA (ISR 中已验证)
+         Byte 4-7:  时间戳 (uint32_t, 大端序)
+         Byte 8-11: 报警信息 (uint32_t, 大端序)
+         Byte 12-15: 漏水距离 (uint32_t, 大端序, 单位cm)
+      */
+      uint32_t rx_timestamp = ((uint32_t)usart3_rx_buf[4]  << 24)
+                            | ((uint32_t)usart3_rx_buf[5]  << 16)
+                            | ((uint32_t)usart3_rx_buf[6]  << 8)
+                            | ((uint32_t)usart3_rx_buf[7]);
+      uint32_t rx_alarm     = ((uint32_t)usart3_rx_buf[8]  << 24)
+                            | ((uint32_t)usart3_rx_buf[9]  << 16)
+                            | ((uint32_t)usart3_rx_buf[10] << 8)
+                            | ((uint32_t)usart3_rx_buf[11]);
+      uint32_t rx_distance  = ((uint32_t)usart3_rx_buf[12] << 24)
+                            | ((uint32_t)usart3_rx_buf[13] << 16)
+                            | ((uint32_t)usart3_rx_buf[14] << 8)
+                            | ((uint32_t)usart3_rx_buf[15]);
+
+      /* 解码报警信息 */
+      const char *alm_text;
+      switch (rx_alarm) {
+        case 0:  alm_text = "NORMAL";       break;  /* 正常 */
+        case 1:  alm_text = "ALARM";        break;  /* 有报警, PC5=1 */
+        case 2:  alm_text = "SENSOR_ERR";   break;  /* 无报警, PC5=0 (传感器异常) */
+        case 3:  alm_text = "ALM+SEN_ERR";  break;  /* 有报警, PC5=0 (报警+传感器异常) */
+        default: alm_text = "UNKNOWN";      break;
+      }
+
+      /* 格式化输出文本 */
+      usart2_tx_len = snprintf((char *)usart2_tx_buf, sizeof(usart2_tx_buf),
+                                "ALARM=%lu %s\r\n", rx_alarm, alm_text);
 
       /* 通过 USART2 发出 */
       USART2_SendPacket(usart2_tx_buf, usart2_tx_len);

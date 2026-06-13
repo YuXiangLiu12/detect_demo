@@ -272,20 +272,18 @@ void USART3_IRQHandler(void)
   {
     LL_USART_ClearFlag_IDLE(USART3);   /* 读SR→DR 清除IDLE标志 */
 
-    /* 检查帧头是否为 $GNZDA (6个字节) */
-    if (usart3_rx_len >= 6
-        && usart3_rx_buf[0] == '$'
-        && usart3_rx_buf[1] == 'G'
-        && usart3_rx_buf[2] == 'N'
-        && usart3_rx_buf[3] == 'Z'
-        && usart3_rx_buf[4] == 'D'
-        && usart3_rx_buf[5] == 'A')
+    /* 检查 16 字节二进制帧: 帧头 0x55 0xAA 0x55 0xAA */
+    if (usart3_rx_len >= 16
+        && usart3_rx_buf[0] == 0x55
+        && usart3_rx_buf[1] == 0xAA
+        && usart3_rx_buf[2] == 0x55
+        && usart3_rx_buf[3] == 0xAA)
     {
       usart3_rx_done = 1;   /* 有效帧: 通知主循环处理 */
     }
     else
     {
-      usart3_rx_len = 0;    /* 帧头不匹配: 丢弃整帧 */
+      usart3_rx_len = 0;    /* 帧头不匹配或长度不足: 丢弃整帧 */
     }
   }
 
