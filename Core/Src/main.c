@@ -251,28 +251,13 @@ int Parse_ZDA(const uint8_t *frame, uint16_t len, ZDA_Time_t *out)
 
 /* USER CODE END 0 */
 
-/* 485 数据包: 01 03 00 00 00 02 C4 0B
-   - 01: 从站地址
-   - 03: 功能码 (读保持寄存器)
-   - 00 00: 起始地址
-   - 00 02: 寄存器数量
-   - C4 0B: CRC16 校验 (低字节在前) */
-uint8_t usart1_tx_packet[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
-
-/* USART2 数据包: 4字节帧头 + 4字节时间戳 + 4字节报警信息 + 4字节漏水距离 = 16字节
- * 所有多字节字段均为大端序 (MSB first) */
-uint8_t usart2_tx_packet[16] = {
-  0x55, 0xAA, 0x55, 0xAA,   /* Byte 0-3:  帧头 */
-  0x00, 0x00, 0x00, 0x00,   /* Byte 4-7:  时间戳 (uint32_t, 大端序) */
-  0x00, 0x00, 0x00, 0x00,   /* Byte 8-11: 报警信息 (uint32_t, 0=正常 1=报警, 大端序) */
-  0x00, 0x00, 0x00, 0x00    /* Byte 12-15: 漏水距离 (uint32_t, 单位cm, 大端序) */
-};
-
-ZDA_Time_t zda_time;
 uint32_t timestamp = 0;  /* 北京时间压缩后的时间戳 (大端序) */
 uint32_t alarm    = 0;   /* 报警状态: 0=正常, 1=报警 */
 uint32_t distance = 0;   /* 漏水距离, 单位cm */
-uint8_t  pc5_state = 0;  /* PC5 引脚电平状态 */
+
+/* USART2 发送缓冲区 (USART3 接收解析后 → USART2 发出) */
+uint8_t  usart2_tx_buf[256];
+uint16_t usart2_tx_len;
 
 /**
   * @brief  The application entry point.
@@ -318,90 +303,23 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* ---- 读取 PC5 输入状态 ---- */
-    pc5_state = (LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_5)) ? 1 : 0;
-
-	  /* ---- USART1 发送请求帧 ---- */
-    USART1_SendPacket(usart1_tx_packet, sizeof(usart1_tx_packet));
-    /* 等待从机应答, 超时 100ms*/
-    {
-      uint32_t tmo = 100;   /* 100ms 超时 */
-      while (!usart1_rx_done && tmo > 0)
-      {
-        LL_mDelay(1);
-        tmo--;
-      }
-
-      if (usart1_rx_done)
-      {
-        usart1_rx_done = 0;
-
-        /* 提取报警状态 (字节4,5) 和 漏水距离 (字节6,7), 大端序 */
-        alarm    = ((uint32_t)usart1_rx_buf[3] << 8) | usart1_rx_buf[4];
-        if(alarm != 0 && pc5_state == 0)
-        {
-        	alarm = 0x00000003;
-        }
-        else if(alarm == 0 && pc5_state == 1)
-        {
-        	alarm = 0x00000000;
-        }
-        else if(alarm == 0 && pc5_state == 0)
-        {
-        	alarm = 0x00000002;
-        }
-        distance = ((uint32_t)usart1_rx_buf[5] << 8) | usart1_rx_buf[6];
-
-        usart1_rx_len = 0;
-      }
-      else
-      {
-        /* 超时: 从机无应答, 仅重置接收状态 (alarm/distance 保持上一轮值) */
-        usart1_rx_len = 0;
-      }
-    }
-
-    /* ---- USART3: 检查是否有 $GNZDA GPS 帧到达 ---- */
+    /* ---- USART3 → USART2 转发: 收一次, 发一次 ---- */
     if (usart3_rx_done)
     {
-      Parse_ZDA(usart3_rx_buf, usart3_rx_len, &zda_time);
-      /* 北京时间按位压缩到 uint32_t (大端序):
-         [31:26] 年-2000  [25:22] 月  [21:17] 日
-         [16:12] 时       [11:6]  分  [5:0]   秒   */
-      timestamp = ((uint32_t)(zda_time.bj_year - 2000) << 26)
-                         | ((uint32_t) zda_time.bj_month       << 22)
-                         | ((uint32_t) zda_time.bj_day         << 17)
-                         | ((uint32_t) zda_time.bj_hour        << 12)
-                         | ((uint32_t) zda_time.minute      << 6)
-                         | ((uint32_t) zda_time.second);
+      /* TODO step2: 解析 usart3_rx_buf[] → 构建 usart2_tx_buf[] */
+      /* 当前(step1): 直接将原始数据转发出去 */
+      memcpy(usart2_tx_buf, usart3_rx_buf, usart3_rx_len);
+      usart2_tx_len = usart3_rx_len;
 
-      /* 清空缓冲区, 准备接收下一帧 */
-      usart3_rx_len  = 0;
+      /* 通过 USART2 发出 */
+      USART2_SendPacket(usart2_tx_buf, usart2_tx_len);
+
+      /* 清除标志, 准备接收下一帧 */
       usart3_rx_done = 0;
+      usart3_rx_len  = 0;
     }
-
-    /* ---- USART2 数据打包发送 ---- */
-    {
-      /* 按大端序逐字节打包 (帧头 0-3 不动, 数据从偏移4开始) */
-      usart2_tx_packet[4]  = (uint8_t)(timestamp >> 24);  /* Byte 4:   时间戳 [31:24] */
-      usart2_tx_packet[5]  = (uint8_t)(timestamp >> 16);  /* Byte 5:   时间戳 [23:16] */
-      usart2_tx_packet[6]  = (uint8_t)(timestamp >> 8);   /* Byte 6:   时间戳 [15:8]  */
-      usart2_tx_packet[7]  = (uint8_t)(timestamp >> 0);   /* Byte 7:   时间戳 [7:0]   */
-      usart2_tx_packet[8]  = (uint8_t)(alarm     >> 24);  /* Byte 8:   报警信息 [31:24] */
-      usart2_tx_packet[9]  = (uint8_t)(alarm     >> 16);  /* Byte 9:   报警信息 [23:16] */
-      usart2_tx_packet[10] = (uint8_t)(alarm     >> 8);   /* Byte 10:  报警信息 [15:8]  */
-      usart2_tx_packet[11] = (uint8_t)(alarm     >> 0);   /* Byte 11:  报警信息 [7:0]   */
-      usart2_tx_packet[12] = (uint8_t)(distance  >> 24);  /* Byte 12:  漏水距离 [31:24] */
-      usart2_tx_packet[13] = (uint8_t)(distance  >> 16);  /* Byte 13:  漏水距离 [23:16] */
-      usart2_tx_packet[14] = (uint8_t)(distance  >> 8);   /* Byte 14:  漏水距离 [15:8]  */
-      usart2_tx_packet[15] = (uint8_t)(distance  >> 0);   /* Byte 15:  漏水距离 [7:0]   */
-    }
-
-    USART2_SendPacket(usart2_tx_packet, sizeof(usart2_tx_packet));
-
-    LL_mDelay(1000);
-
   }
+  /* USER CODE END WHILE */
 }
 
 /**
