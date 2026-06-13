@@ -337,8 +337,11 @@ int main(void)
         LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_4);
       }
 
+      /* 将收到的 16 字节数据复制到发送缓冲区 */
+      memcpy(usart2_tx_buf, usart3_rx_buf, 16);
+
       /* 通过 USART2 发出 */
-      USART2_SendPacket(usart2_tx_buf, sizeof(usart2_tx_buf));
+      USART2_SendPacket(usart2_tx_buf, 16);
 
       /* 清除标志, 准备接收下一帧 */
       usart3_rx_done = 0;
