@@ -1,0 +1,474 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "usart.h"
+#include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <string.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/**
+  * @brief  Send a single byte via USART1 (blocking, polling TXE flag)
+  * @param  data: byte to send
+  * @retval None
+  */
+static void USART1_SendByte(uint8_t data)
+{
+  while (!LL_USART_IsActiveFlag_TXE(USART1));
+  LL_USART_TransmitData8(USART1, data);
+}
+
+/**
+  * @brief  Send a data packet via USART1
+  * @param  pData: pointer to data buffer
+  * @param  len: number of bytes to send
+  * @retval None
+  */
+static void USART1_SendPacket(uint8_t *pData, uint16_t len)
+{
+  for (uint16_t i = 0; i < len; i++)
+  {
+    USART1_SendByte(pData[i]);
+  }
+  /* Wait for last byte transmission to complete */
+  while (!LL_USART_IsActiveFlag_TC(USART1));
+}
+
+/* ---- USART2 发送函数 ---- */
+
+/**
+  * @brief  Send a single byte via USART2 (blocking, polling TXE flag)
+  * @param  data: byte to send
+  * @retval None
+  */
+static void USART2_SendByte(uint8_t data)
+{
+  while (!LL_USART_IsActiveFlag_TXE(USART2));
+  LL_USART_TransmitData8(USART2, data);
+}
+
+/**
+  * @brief  Send a data packet via USART2
+  * @param  pData: pointer to data buffer
+  * @param  len: number of bytes to send
+  * @retval None
+  */
+static void USART2_SendPacket(uint8_t *pData, uint16_t len)
+{
+  for (uint16_t i = 0; i < len; i++)
+  {
+    USART2_SendByte(pData[i]);
+  }
+  /* Wait for last byte transmission to complete */
+  while (!LL_USART_IsActiveFlag_TC(USART2));
+}
+
+/**
+  * @brief  判断是否为闰年
+  * @param  year: 年份 (如 2026)
+  * @retval 1=闰年, 0=平年
+  */
+static uint8_t IsLeapYear(uint16_t year)
+{
+  return ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0));
+}
+
+/**
+  * @brief  获取某月天数
+  * @param  year:  年份
+  * @param  month: 月份 1-12
+  * @retval 该月天数
+  */
+static uint8_t DaysInMonth(uint16_t year, uint8_t month)
+{
+  static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  if (month == 2 && IsLeapYear(year)) return 29;
+  return days[month - 1];
+}
+
+/**
+  * @brief  解析 $GNZDA 帧, 提取 UTC 时间并换算北京时间 (UTC+8)
+  * @param  frame: 接收缓冲区 (以 '\0' 结尾 或 以 '\r' 结尾的原始 NMEA 帧)
+  * @param  len:   帧长度
+  * @param  out:   输出解析后的时间结构体
+  * @retval 0=成功, -1=格式错误
+  *
+  * NMEA ZDA 格式: $GNZDA,hhmmss.ss,dd,mm,yyyy,xx,xx*CS
+  *   示例: $GNZDA,071614.000,11,06,2026,00,00*4D
+  */
+int Parse_ZDA(const uint8_t *frame, uint16_t len, ZDA_Time_t *out)
+{
+  uint16_t pos = 0;
+  char field[16];       /* 单个字段暂存 */
+  uint8_t fi = 0;       /* 字段索引 */
+  uint8_t fp = 0;       /* 字段内位置 */
+
+  /* 跳过帧头 $GNZDA,  (7个字符) */
+  if (len < 7 || frame[0] != '$')
+    return -1;
+  pos = 7;  /* 指向 hhmmss.ss 的第一个字符 */
+
+  /* 逐字符解析逗号分隔的字段 */
+  while (pos < len && fi < 6)
+  {
+    char c = (char)frame[pos++];
+
+    if (c == ',' || c == '*' || c == '\r' || c == '\n')
+    {
+      field[fp] = '\0';                 /* 字段结束 */
+
+      switch (fi)
+      {
+        case 0: /* UTC时间 hhmmss.ss — 取前6位整数 */
+          if (fp >= 6)
+          {
+            out->hour   = (uint8_t)((field[0]-'0')*10 + (field[1]-'0'));
+            out->minute = (uint8_t)((field[2]-'0')*10 + (field[3]-'0'));
+            out->second = (uint8_t)((field[4]-'0')*10 + (field[5]-'0'));
+          }
+          else return -1;
+          break;
+
+        case 1: /* 日 dd */
+          out->day = (uint8_t)((fp >= 2) ? ((field[0]-'0')*10 + (field[1]-'0')) : (field[0]-'0'));
+          break;
+
+        case 2: /* 月 mm */
+          out->month = (uint8_t)((fp >= 2) ? ((field[0]-'0')*10 + (field[1]-'0')) : (field[0]-'0'));
+          break;
+
+        case 3: /* 年 yyyy */
+          if (fp >= 4)
+            out->year = (uint16_t)((field[0]-'0')*1000 + (field[1]-'0')*100
+                                 + (field[2]-'0')*10   + (field[3]-'0'));
+          else return -1;
+          break;
+
+        case 4: /* 本地区域小时 (未使用) */
+        case 5: /* 本地区域分钟 (未使用) */
+          break;
+      }
+
+      fi++;
+      fp = 0;
+
+      if (c == '*') break;   /* 遇到校验和, 字段结束 */
+    }
+    else
+    {
+      if (fp < sizeof(field) - 1)
+        field[fp++] = c;
+    }
+  }
+
+  /* 校验基本范围 */
+  if (out->month < 1 || out->month > 12)  return -1;
+  if (out->day   < 1 || out->day   > 31)  return -1;
+  if (out->hour  > 23 || out->minute > 59 || out->second > 59) return -1;
+
+  /* ---- UTC → 北京时间 (UTC+8) ---- */
+  {
+    uint8_t  bj_h = out->hour + 8;
+    uint8_t  bj_d = out->day;
+    uint8_t  bj_m = out->month;
+    uint16_t bj_y = out->year;
+    uint8_t  carry_day = (bj_h >= 24) ? 1 : 0;
+
+    bj_h %= 24;
+
+    if (carry_day)
+    {
+      bj_d++;
+      if (bj_d > DaysInMonth(bj_y, bj_m))
+      {
+        bj_d = 1;
+        bj_m++;
+        if (bj_m > 12)
+        {
+          bj_m = 1;
+          bj_y++;
+        }
+      }
+    }
+
+    out->bj_hour  = bj_h;
+    out->bj_day   = bj_d;
+    out->bj_month = bj_m;
+    out->bj_year  = bj_y;
+  }
+
+  return 0;
+}
+
+/* USER CODE END 0 */
+
+/* 485 数据包: 01 03 00 00 00 02 C4 0B
+   - 01: 从站地址
+   - 03: 功能码 (读保持寄存器)
+   - 00 00: 起始地址
+   - 00 02: 寄存器数量
+   - C4 0B: CRC16 校验 (低字节在前) */
+uint8_t usart1_tx_packet[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+/* USART2 数据包: 4字节帧头 + 4字节时间戳 + 4字节报警信息 + 4字节漏水距离 = 16字节
+ * 所有多字节字段均为大端序 (MSB first) */
+uint8_t usart2_tx_packet[16] = {
+  0x55, 0xAA, 0x55, 0xAA,   /* Byte 0-3:  帧头 */
+  0x00, 0x00, 0x00, 0x00,   /* Byte 4-7:  时间戳 (uint32_t, 大端序) */
+  0x00, 0x00, 0x00, 0x00,   /* Byte 8-11: 报警信息 (uint32_t, 0=正常 1=报警, 大端序) */
+  0x00, 0x00, 0x00, 0x00    /* Byte 12-15: 漏水距离 (uint32_t, 单位cm, 大端序) */
+};
+
+ZDA_Time_t zda_time;
+uint32_t timestamp = 0;  /* 北京时间压缩后的时间戳 (大端序) */
+uint32_t alarm    = 0;   /* 报警状态: 0=正常, 1=报警 */
+uint32_t distance = 0;   /* 漏水距离, 单位cm */
+uint8_t  pc5_state = 0;  /* PC5 引脚电平状态 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_SYSCFG);
+  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
+
+  /* System interrupt init*/
+  NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_4);
+
+  /* SysTick_IRQn interrupt configuration */
+  NVIC_SetPriority(SysTick_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),15, 0));
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART1_UART_Init();
+  MX_USART2_UART_Init();
+  MX_USART3_UART_Init();
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* ---- 读取 PC5 输入状态 ---- */
+    pc5_state = (LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_5)) ? 1 : 0;
+
+	  /* ---- USART1 发送请求帧 ---- */
+    USART1_SendPacket(usart1_tx_packet, sizeof(usart1_tx_packet));
+    /* 等待从机应答, 超时 100ms*/
+    {
+      uint32_t tmo = 100;   /* 100ms 超时 */
+      while (!usart1_rx_done && tmo > 0)
+      {
+        LL_mDelay(1);
+        tmo--;
+      }
+
+      if (usart1_rx_done)
+      {
+        usart1_rx_done = 0;
+
+        /* 提取报警状态 (字节4,5) 和 漏水距离 (字节6,7), 大端序 */
+        alarm    = ((uint32_t)usart1_rx_buf[3] << 8) | usart1_rx_buf[4];
+        if(alarm != 0 && pc5_state == 0)
+        {
+        	alarm = 0x00000003;
+        }
+        else if(alarm == 0 && pc5_state == 1)
+        {
+        	alarm = 0x00000000;
+        }
+        else if(alarm == 0 && pc5_state == 0)
+        {
+        	alarm = 0x00000002;
+        }
+        distance = ((uint32_t)usart1_rx_buf[5] << 8) | usart1_rx_buf[6];
+
+        usart1_rx_len = 0;
+      }
+      else
+      {
+        /* 超时: 从机无应答, 仅重置接收状态 (alarm/distance 保持上一轮值) */
+        usart1_rx_len = 0;
+      }
+    }
+
+    /* ---- USART3: 检查是否有 $GNZDA GPS 帧到达 ---- */
+    if (usart3_rx_done)
+    {
+      Parse_ZDA(usart3_rx_buf, usart3_rx_len, &zda_time);
+      /* 北京时间按位压缩到 uint32_t (大端序):
+         [31:26] 年-2000  [25:22] 月  [21:17] 日
+         [16:12] 时       [11:6]  分  [5:0]   秒   */
+      timestamp = ((uint32_t)(zda_time.bj_year - 2000) << 26)
+                         | ((uint32_t) zda_time.bj_month       << 22)
+                         | ((uint32_t) zda_time.bj_day         << 17)
+                         | ((uint32_t) zda_time.bj_hour        << 12)
+                         | ((uint32_t) zda_time.minute      << 6)
+                         | ((uint32_t) zda_time.second);
+
+      /* 清空缓冲区, 准备接收下一帧 */
+      usart3_rx_len  = 0;
+      usart3_rx_done = 0;
+    }
+
+    /* ---- USART2 数据打包发送 ---- */
+    {
+      /* 按大端序逐字节打包 (帧头 0-3 不动, 数据从偏移4开始) */
+      usart2_tx_packet[4]  = (uint8_t)(timestamp >> 24);  /* Byte 4:   时间戳 [31:24] */
+      usart2_tx_packet[5]  = (uint8_t)(timestamp >> 16);  /* Byte 5:   时间戳 [23:16] */
+      usart2_tx_packet[6]  = (uint8_t)(timestamp >> 8);   /* Byte 6:   时间戳 [15:8]  */
+      usart2_tx_packet[7]  = (uint8_t)(timestamp >> 0);   /* Byte 7:   时间戳 [7:0]   */
+      usart2_tx_packet[8]  = (uint8_t)(alarm     >> 24);  /* Byte 8:   报警信息 [31:24] */
+      usart2_tx_packet[9]  = (uint8_t)(alarm     >> 16);  /* Byte 9:   报警信息 [23:16] */
+      usart2_tx_packet[10] = (uint8_t)(alarm     >> 8);   /* Byte 10:  报警信息 [15:8]  */
+      usart2_tx_packet[11] = (uint8_t)(alarm     >> 0);   /* Byte 11:  报警信息 [7:0]   */
+      usart2_tx_packet[12] = (uint8_t)(distance  >> 24);  /* Byte 12:  漏水距离 [31:24] */
+      usart2_tx_packet[13] = (uint8_t)(distance  >> 16);  /* Byte 13:  漏水距离 [23:16] */
+      usart2_tx_packet[14] = (uint8_t)(distance  >> 8);   /* Byte 14:  漏水距离 [15:8]  */
+      usart2_tx_packet[15] = (uint8_t)(distance  >> 0);   /* Byte 15:  漏水距离 [7:0]   */
+    }
+
+    USART2_SendPacket(usart2_tx_packet, sizeof(usart2_tx_packet));
+
+    LL_mDelay(1000);
+
+  }
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  LL_FLASH_SetLatency(LL_FLASH_LATENCY_0);
+  while(LL_FLASH_GetLatency()!= LL_FLASH_LATENCY_0)
+  {
+  }
+  LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE1);
+  LL_RCC_HSI_SetCalibTrimming(16);
+  LL_RCC_HSI_Enable();
+
+   /* Wait till HSI is ready */
+  while(LL_RCC_HSI_IsReady() != 1)
+  {
+
+  }
+  LL_RCC_SetAHBPrescaler(LL_RCC_SYSCLK_DIV_1);
+  LL_RCC_SetAPB1Prescaler(LL_RCC_APB1_DIV_1);
+  LL_RCC_SetAPB2Prescaler(LL_RCC_APB2_DIV_1);
+  LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_HSI);
+
+   /* Wait till System clock is ready */
+  while(LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_HSI)
+  {
+
+  }
+  LL_Init1msTick(16000000);
+  LL_SetSystemCoreClock(16000000);
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
