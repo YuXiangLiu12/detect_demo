@@ -300,6 +300,9 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
 
+  LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6|LL_GPIO_PIN_7);
+  LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_4);
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -313,20 +316,20 @@ int main(void)
          Byte 8-11: 报警信息 (uint32_t, 大端序)
          Byte 12-15: 漏水距离 (uint32_t, 大端序, 单位cm)
       */
-      uint32_t rx_timestamp = ((uint32_t)usart3_rx_buf[4]  << 24)
+      timestamp = ((uint32_t)usart3_rx_buf[4]  << 24)
                             | ((uint32_t)usart3_rx_buf[5]  << 16)
                             | ((uint32_t)usart3_rx_buf[6]  << 8)
                             | ((uint32_t)usart3_rx_buf[7]);
-      uint32_t rx_alarm     = ((uint32_t)usart3_rx_buf[8]  << 24)
+      alarm     = ((uint32_t)usart3_rx_buf[8]  << 24)
                             | ((uint32_t)usart3_rx_buf[9]  << 16)
                             | ((uint32_t)usart3_rx_buf[10] << 8)
                             | ((uint32_t)usart3_rx_buf[11]);
-      uint32_t rx_distance  = ((uint32_t)usart3_rx_buf[12] << 24)
+      distance  = ((uint32_t)usart3_rx_buf[12] << 24)
                             | ((uint32_t)usart3_rx_buf[13] << 16)
                             | ((uint32_t)usart3_rx_buf[14] << 8)
                             | ((uint32_t)usart3_rx_buf[15]);
 
-      if(rx_alarm == 0)
+      if(alarm == 0)
       {
         LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6|LL_GPIO_PIN_7);
         LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_4);
