@@ -320,8 +320,16 @@ int main(void)
   {
     /* ---- 读取 PC5 输入状态 ---- */
     pc5_state = (LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_5)) ? 1 : 0;
+    if(pc5_state == 0)
+    {
+        alarm = 0x00000002;
+    }
+    else
+    {
+    	alarm = 0x00000000;
+    }
 
-	  /* ---- USART1 发送请求帧 ---- */
+    /* ---- USART1 发送请求帧 ---- */
     USART1_SendPacket(usart1_tx_packet, sizeof(usart1_tx_packet));
     /* 等待从机应答, 超时 100ms*/
     {
