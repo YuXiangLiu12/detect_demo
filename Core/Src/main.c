@@ -58,6 +58,34 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 
 /**
+  * @brief  初始化 TIM6 基本定时器, 用于蜂鸣器滴滴声
+  * @note   APB1 = 16MHz, PSC=15999 → 定时器时钟=1kHz
+  *         ARR=99 → 更新周期=100ms (10Hz)
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+  /* 使能 TIM6 时钟 (APB1) */
+  RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
+
+  /* TIM6 配置: 向上计数, 100ms 更新周期 */
+  TIM6->PSC = 15999;   /* 预分频: 16MHz / 16000 = 1kHz */
+  TIM6->ARR = 99;      /* 自动重载: 1kHz / 100 = 10Hz (100ms) */
+  TIM6->DIER |= TIM_DIER_UIE;  /* 使能更新中断 */
+
+  /* 产生更新事件, 将影子寄存器值加载到活动寄存器 */
+  TIM6->EGR = TIM_EGR_UG;
+  TIM6->SR = (uint16_t)~TIM_SR_UIF;  /* 清除 UG 产生的 UIF 标志 */
+
+  /* NVIC 配置: 优先级 5 (低于 USART 的 0) */
+  NVIC_SetPriority(TIM6_DAC_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 5, 0));
+  NVIC_EnableIRQ(TIM6_DAC_IRQn);
+
+  /* 启动定时器 */
+  TIM6->CR1 |= TIM_CR1_CEN;
+}
+
+/**
   * @brief  Send a single byte via USART1 (blocking, polling TXE flag)
   * @param  data: byte to send
   * @retval None
@@ -299,6 +327,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
+  MX_TIM6_Init();
 
   LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6|LL_GPIO_PIN_7);
   LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_4);
@@ -331,12 +360,16 @@ int main(void)
 
       if(alarm == 0)
       {
+        // 红灯灭 (PA7), 蜂鸣器关 (PA6)
         LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6|LL_GPIO_PIN_7);
+        // 绿灯亮 (PC4)
         LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_4);
       }
       else
       {
-        LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6|LL_GPIO_PIN_7);
+        // 红灯亮 (PA7), 蜂鸣器滴滴声由 TIM6 ISR 控制 (PA6)
+        LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_7);
+        // 绿灯灭 (PC4)
         LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_4);
       }
 

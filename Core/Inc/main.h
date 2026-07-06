@@ -85,6 +85,9 @@ void Error_Handler(void);
 /* 解析 $GNZDA 帧, 提取 UTC 时间并换算北京时间 (UTC+8) */
 int Parse_ZDA(const uint8_t *frame, uint16_t len, ZDA_Time_t *out);
 
+/* 报警状态变量 (定义在 main.c, 供 ISR 使用) */
+extern uint32_t alarm;
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

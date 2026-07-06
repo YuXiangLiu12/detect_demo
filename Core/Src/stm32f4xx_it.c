@@ -298,4 +298,56 @@ void USART3_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
+/**
+  * @brief TIM6 定时器中断处理 (100ms 周期)
+  *        实现蜂鸣器 (PA6) 滴滴声:
+  *        200ms响 → 200ms停 → 200ms响 → 600ms停 → 循环
+  *        仅当 alarm != 0 时生效
+  */
+void TIM6_DAC_IRQHandler(void)
+{
+  if (TIM6->SR & TIM_SR_UIF)
+  {
+    TIM6->SR = ~TIM_SR_UIF;  /* 清除更新中断标志 */
+
+    static uint8_t beep_tick = 0;
+
+    if (alarm != 0)
+    {
+      beep_tick++;
+      /* 滴滴模式 (100ms/tick):
+         tick  1-2:  蜂鸣器响 (200ms)
+         tick  3-4:  蜂鸣器停 (200ms)
+         tick  5-6:  蜂鸣器响 (200ms)
+         tick  7-12: 蜂鸣器停 (600ms)
+      */
+      if (beep_tick <= 2)
+      {
+        LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6);   /* 蜂鸣器响 (PA6) */
+      }
+      else if (beep_tick <= 4)
+      {
+        LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6); /* 蜂鸣器停 (PA6) */
+      }
+      else if (beep_tick <= 6)
+      {
+        LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6);   /* 蜂鸣器响 (PA6) */
+      }
+      else
+      {
+        LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6); /* 蜂鸣器停 (PA6) */
+        if (beep_tick >= 12)
+        {
+          beep_tick = 0;  /* 一个滴滴周期结束, 重新开始 */
+        }
+      }
+    }
+    else
+    {
+      beep_tick = 0;
+      LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6);   /* 无报警: 确保蜂鸣器关闭 (PA6) */
+    }
+  }
+}
+
 /* USER CODE END 1 */
